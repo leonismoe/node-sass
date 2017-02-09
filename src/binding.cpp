@@ -21,6 +21,10 @@ Sass_Import_List sass_importer(const char* cur_path, Sass_Importer_Entry cb, str
 
 union Sass_Value* sass_custom_function(const union Sass_Value* s_args, Sass_Function_Entry cb, struct Sass_Compiler* comp)
 {
+  // get information about previous importer entry from the stack
+  Sass_Import_Entry import = sass_compiler_get_last_import(comp);
+  const char* prev_abs_path = sass_import_get_abs_path(import);
+
   void* cookie = sass_function_get_cookie(cb);
   CustomFunctionBridge& bridge = *(static_cast<CustomFunctionBridge*>(cookie));
 
@@ -28,6 +32,7 @@ union Sass_Value* sass_custom_function(const union Sass_Value* s_args, Sass_Func
   for (unsigned l = sass_list_get_length(s_args), i = 0; i < l; i++) {
     argv.push_back((void*)sass_list_get_value(s_args, i));
   }
+  argv.push_back((void*)sass_make_string(prev_abs_path));
 
   return bridge(argv);
 }
