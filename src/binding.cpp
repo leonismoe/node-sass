@@ -5,8 +5,11 @@
 #include "create_string.h"
 #include "sass_types/factory.h"
 
+struct Sass_Compiler* g_comp = nullptr;
+
 Sass_Import_List sass_importer(const char* cur_path, Sass_Importer_Entry cb, struct Sass_Compiler* comp)
 {
+  g_comp = comp;
   void* cookie = sass_importer_get_cookie(cb);
   struct Sass_Import* previous = sass_compiler_get_last_import(comp);
   const char* prev_path = sass_import_get_abs_path(previous);
@@ -21,6 +24,7 @@ Sass_Import_List sass_importer(const char* cur_path, Sass_Importer_Entry cb, str
 
 union Sass_Value* sass_custom_function(const union Sass_Value* s_args, Sass_Function_Entry cb, struct Sass_Compiler* comp)
 {
+  g_comp = comp;
   void* cookie = sass_function_get_cookie(cb);
   CustomFunctionBridge& bridge = *(static_cast<CustomFunctionBridge*>(cookie));
 
@@ -257,6 +261,7 @@ void MakeCallback(uv_work_t* req) {
     Nan::FatalException(try_catch);
   }
 
+  g_comp = nullptr;
   sass_free_context_wrapper(ctx_w);
 }
 
@@ -267,7 +272,7 @@ NAN_METHOD(render) {
   struct Sass_Data_Context* dctx = sass_make_data_context(source_string);
   sass_context_wrapper* ctx_w = sass_make_context_wrapper();
 
-  if (ExtractOptions(options, dctx, ctx_w, false, false) >= 0) { 
+  if (ExtractOptions(options, dctx, ctx_w, false, false) >= 0) {
 
     int status = uv_queue_work(uv_default_loop(), &ctx_w->request, compile_it, (uv_after_work_cb)MakeCallback);
 
@@ -289,6 +294,7 @@ NAN_METHOD(render_sync) {
     result = GetResult(ctx_w, ctx, true);
   }
 
+  g_comp = nullptr;
   sass_free_context_wrapper(ctx_w);
   info.GetReturnValue().Set(result == 0);
 }
@@ -321,10 +327,39 @@ NAN_METHOD(render_file_sync) {
     result = GetResult(ctx_w, ctx, true);
   };
 
+  g_comp = nullptr;
   free(input_path);
   sass_free_context_wrapper(ctx_w);
 
   info.GetReturnValue().Set(result == 0);
+}
+
+NAN_METHOD(get_last_import_path) {
+
+  if (g_comp == nullptr) {
+    Nan::ThrowReferenceError("Sass compiler is not initialized or has been freed.");
+    return;
+  }
+
+  Sass_Import_Entry import = sass_compiler_get_last_import(g_comp);
+  info.GetReturnValue().Set(Nan::New<v8::String>(sass_import_get_abs_path(import)).ToLocalChecked());
+}
+
+NAN_METHOD(get_import_stack) {
+
+  if (g_comp == nullptr) {
+    Nan::ThrowReferenceError("Sass compiler is not initialized or has been freed.");
+    return;
+  }
+
+  size_t length = sass_compiler_get_import_stack_size(g_comp);
+  v8::Local<v8::Array> result = Nan::New<v8::Array>(length);
+  for (size_t i = 0; i < length; ++i) {
+    Sass_Import_Entry import = sass_compiler_get_import_entry(g_comp, i);
+    result->Set(i, Nan::New<v8::String>(sass_import_get_abs_path(import)).ToLocalChecked());
+  }
+
+  info.GetReturnValue().Set(result);
 }
 
 NAN_METHOD(libsass_version) {
@@ -336,6 +371,8 @@ NAN_MODULE_INIT(RegisterModule) {
   Nan::SetMethod(target, "renderSync", render_sync);
   Nan::SetMethod(target, "renderFile", render_file);
   Nan::SetMethod(target, "renderFileSync", render_file_sync);
+  Nan::SetMethod(target, "getLastImportPath", get_last_import_path);
+  Nan::SetMethod(target, "getImportStack", get_import_stack);
   Nan::SetMethod(target, "libsassVersion", libsass_version);
   SassTypes::Factory::initExports(target);
 }
